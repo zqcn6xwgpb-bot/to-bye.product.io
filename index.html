@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Чек-лист закупки ХЦ - Баранчик</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+        // --- НАЛАШТУВАННЯ FIREBASE (Вставте свої дані тут) ---
+        const firebaseConfig = {
+  apiKey: "AIzaSyDo0IvJJbBSXCs7u2rpZ8fHrwK4Nm5isFo",
+  authDomain: "baranchik-checklist.firebaseapp.com",
+  databaseURL: "https://baranchik-checklist-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "baranchik-checklist",
+  storageBucket: "baranchik-checklist.firebasestorage.app",
+  messagingSenderId: "374378353806",
+  appId: "1:374378353806:web:95ff4b94c14fad8bece5df",
+  measurementId: "G-02MD5FRXLX"
+};
+
+        // Ініціалізація
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Робимо функції доступними глобально для HTML
+        window.db = db;
+        window.firebaseRef = ref;
+        window.firebaseSet = set;
+        window.firebaseOnValue = onValue;
+        
+        // Подія готовності
+        window.dispatchEvent(new Event('firebase-ready'));
+    </script>
+
+    <style>
+        @media (max-width: 768px) {
+            body { padding: 0.5rem; }
+            .mobile-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            table { min-width: 100%; font-size: 0.75rem; }
+            th, td { padding: 0.5rem !important; min-width: 70px; }
+            th:first-child, td:first-child { position: sticky; left: 0; background: white; z-index: 10; min-width: 120px; max-width: 150px; }
+            thead th:first-child { background: rgb(248 250 252); z-index: 11; }
+            input[type="number"] { font-size: 0.875rem; padding: 0.375rem !important; min-width: 60px; }
+            .header-buttons { flex-direction: column; width: 100%; }
+            .header-buttons button { width: 100%; }
+            h1 { font-size: 1.5rem !important; }
+            h2 { font-size: 1.125rem !important; }
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 p-4">
+
+    <div id="passwordModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style="display:none;">
+        <div class="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full mx-4">
+            <h2 class="text-xl font-bold text-slate-800 mb-4">🔒 Введіть пароль</h2>
+            <input type="password" id="passwordInput" class="w-full px-4 py-2 border border-slate-300 rounded-lg mb-4" placeholder="Пароль"/>
+            <div class="flex gap-2">
+                <button onclick="checkPassword()" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Підтвердити</button>
+                <button onclick="closePasswordModal()" class="flex-1 px-4 py-2 bg-slate-300 text-slate-700 rounded-lg hover:bg-slate-400">Скасувати</button>
+            </div>
+            <p id="passwordError" class="text-red-600 text-sm mt-2" style="display:none;">❌ Невірний пароль</p>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto">
+        <div class="bg-white rounded-xl shadow-lg p-4 md:p-6 mb-4 md:mb-6">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-4">
+                <div class="flex items-center gap-3">
+                    <span class="text-2xl md:text-3xl">🛒</span>
+                    <div>
+                        <h1 class="text-2xl md:text-3xl font-bold text-slate-800">Чек-лист закупки ХЦ</h1>
+                        <p class="text-xs md:text-base text-slate-600">Ресторан "Той Самий Баранчик Кременчук"</p>
+                    </div>
+                </div>
+                <div id="status" class="hidden px-4 py-2 rounded-lg font-medium text-sm"></div>
+            </div>
+
+            <div class="flex flex-wrap gap-2 header-buttons">
+                <button onclick="exportToExcel()" class="px-3 md:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm">📊 Excel</button>
+                <button onclick="printList()" class="px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm">🖨️ Друк</button>
+                <button onclick="clearStocksOnly()" class="px-3 md:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm">🗑️ Очистити залишки</button>
+                <button onclick="togglePasswordProtection()" class="px-3 md:px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium text-sm">
+                    <span id="lockIcon">🔓</span> <span id="lockText">Розблокувати</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="loadingMessage" class="text-center py-10 text-slate-500 font-medium">
+            ⏳ З'єднання з базою даних...
+        </div>
+
+        <div id="checklist-container"></div>
+
+        <div class="bg-white rounded-xl shadow-lg p-4 md:p-6 mt-4 md:mt-6">
+            <div class="text-xs md:text-sm text-slate-600">
+                <p class="mb-2">Дата: <span id="date"></span></p>
+                <p>Підпис: _________________</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const PASSWORD = "1234";
+        let isUnlocked = false;
+        let pendingAction = null; // Для збереження дії під час введення пароля
+
+        // ВАШІ КАТЕГОРІЇ З ОРИГІНАЛЬНОГО ФАЙЛУ
+        const categories = {
+            'ОВОЧІ ТА ЗЕЛЕНЬ': { schedule: 'вт-ср, пт-нд', items: ['Огірок свіжий','Помідор чері','Перець солодкий','Перець чілі','Цибуля марс','Цибуля зелена','Салат Ромен','Салат Айсберг','Кінза','Шпинат','Кріп','Петрушка','Рукола','М\'ята','Тархун','Картопля','Капуста б/к','Баклажан','Селера стебло','Часник','Буряк'] },
+            'М\'ЯСО ТА ПТИЦЯ': { items: ['Стегно куряче (пн-вт)','Печінка куряча (пн,вт,ср)','Качка філе (пн,вт,ср,чт,пт,сб)','Телятина товстий край'] },
+            'РИБА ТА МОРЕПРОДУКТИ': { items: ['Лосось','Оселедець'] },
+            'МОЛОЧНІ ПРОДУКТИ ТА СИРИ': { items: ['Сир імеретинський','Сир сулугуні (звичайний)','Сир сулугуні (копчений)','Сир сулугуні (мотанка)','Вершки 18%','Сир бринза','Сир пармезан','Сир з пліснявою','Сир гауда','Сир Добродар','Сир рікотта','Сметана 20%','Масло вершкове'] },
+            'ЯЙЦЯ': { items: ['Яйця курячі'] },
+            'СОУСИ ТА ЗАПРАВКИ': { items: ['Гірчиця столова','Гірчиця французька','Соус Ткемалі','Соус соєвий'] },
+            'ХЛІБОБУЛОЧНІ ВИРОБИ': { items: ['Лаваш (115г)','Багет'] },
+            'ГОРІХИ': { items: ['Горіх волоський (грецький)','Горіх кеш\'ю','Фундук смажений','Насіння гарбуза'] },
+            'СУХОФРУКТИ ТА ФРУКТИ': { items: ['Курага','Інжір в\'ялений','Фініки сушені','Журавлина в\'ялена','Лимон','Виноград','Хурма','Айва с/м','Яблуко'] },
+            'СПЕЦІЇ ТА ПРИПРАВИ': { items: ['Сіль','Шафран','Сумах','Оцет винний','Сванська сіль','Уцхо-сунелі','Лимонна кислота'] },
+            'ІНШІ ІНГРЕДІЄНТИ': { items: ['Мед нетто','Оцет винний','Оцет столовий','Олія соняшникова','Олія оливкова','Олія Домашня (запашна)','Олія кунжутна'] },
+            'КОПЧЕНІ ПРОДУКТИ': { items: ['Суджук','Бастурма','Сало спек','Філе куряче с/к'] },
+            'МАРИНОВАНІ ОВОЧІ': { schedule: 'сб-нд на вт', items: ['Огірок солоний (маринований)','Помідори солоні (мариновані)','Часник солоний (марінований)','Капуста по-гурійськи п/ф'] }
+        };
+
+        let data = {};
+
+        // Чекаємо на завантаження Firebase модуля
+        window.addEventListener('firebase-ready', () => {
+            document.getElementById('date').textContent = new Date().toLocaleDateString('uk-UA');
+            
+            const dbRef = window.firebaseRef(window.db, 'checklist_data');
+
+            // СЛУХАЄМО ЗМІНИ В РЕАЛЬНОМУ ЧАСІ
+            window.firebaseOnValue(dbRef, (snapshot) => {
+                document.getElementById('loadingMessage').style.display = 'none';
+                
+                if (snapshot.exists()) {
+                    data = snapshot.val();
+                } else {
+                    // Перший запуск: створюємо структуру в базі
+                    initDataStructure();
+                }
+                renderUI();
+            });
+        });
+
+        // Створення початкової структури даних
+        function initDataStructure() {
+            const newData = {};
+            Object.keys(categories).forEach(cat => {
+                newData[cat] = {};
+                categories[cat].items.forEach(item => {
+                    newData[cat][item] = { stock: '', weekday: '', weekend: '', orderWeekday: 0, orderWeekend: 0 };
+                });
+            });
+            // Зберігаємо в хмару
+            window.firebaseSet(window.firebaseRef(window.db, 'checklist_data'), newData);
+        }
+
+        // Функція зміни значень (відразу пише в базу)
+        function handleChange(category, item, field, value) {
+            // Перевірка пароля для норм
+            if ((field === 'weekday' || field === 'weekend') && !isUnlocked) {
+                pendingAction = { category, item, field, value, element: event.target };
+                showPasswordModal();
+                return;
+            }
+
+            // Оновлюємо локальний об'єкт (для миттєвого відображення)
+            if (!data[category]) data[category] = {};
+            if (!data[category][item]) data[category][item] = {};
+            
+            data[category][item][field] = value;
+
+            // Перерахунок замовлення (зберігаємо логіку з оригіналу)
+            const stock = parseFloat(data[category][item].stock) || 0;
+            const weekday = parseFloat(data[category][item].weekday) || 0;
+            const weekend = parseFloat(data[category][item].weekend) || 0;
+
+            data[category][item].orderWeekday = Math.max(0, weekday - stock);
+            data[category][item].orderWeekend = Math.max(0, weekend - stock);
+
+            // Відправка оновленого об'єкта товару в Firebase
+            const itemRef = window.firebaseRef(window.db, `checklist_data/${category}/${item}`);
+            window.firebaseSet(itemRef, data[category][item])
+                .then(() => showStatus('✓ Збережено', 'bg-green-100 text-green-700'))
+                .catch(err => showStatus('❌ Помилка', 'bg-red-100 text-red-700'));
+        }
+
+        // Відмальовка інтерфейсу
+        function renderUI() {
+            let html = '';
+            Object.entries(categories).forEach(([catKey, catData]) => {
+                const schedule = catData.schedule ? `<span class="text-xs md:text-sm text-blue-600 font-normal"> (${catData.schedule})</span>` : '';
+                html += `
+                <div class="bg-white rounded-xl shadow-lg p-3 md:p-6 mb-4 md:mb-6">
+                    <h2 class="text-lg md:text-xl font-bold text-slate-800 mb-3 md:mb-4 pb-2 border-b-2 border-blue-600">${catKey}${schedule}</h2>
+                    <div class="mobile-scroll overflow-x-auto">
+                        <table class="w-full">
+                            <thead>
+                                <tr class="bg-slate-50">
+                                    <th class="text-left p-2 md:p-3 font-semibold text-slate-700 border-b-2 border-slate-200 text-xs md:text-sm">Найменування</th>
+                                    <th class="text-center p-2 md:p-3 font-semibold text-slate-700 border-b-2 border-slate-200 w-20 md:w-32 text-xs md:text-sm">Залишок</th>
+                                    <th class="text-center p-2 md:p-3 font-semibold text-slate-700 border-b-2 border-slate-200 w-20 md:w-32 text-xs md:text-sm">Норма буд. ${!isUnlocked ? '🔒' : ''}</th>
+                                    <th class="text-center p-2 md:p-3 font-semibold text-slate-700 border-b-2 border-slate-200 w-20 md:w-32 text-xs md:text-sm">Норма вих. ${!isUnlocked ? '🔒' : ''}</th>
+                                    <th class="text-center p-2 md:p-3 font-semibold text-green-700 border-b-2 border-slate-200 w-20 md:w-32 text-xs md:text-sm">Дозам. буд.</th>
+                                    <th class="text-center p-2 md:p-3 font-semibold text-green-700 border-b-2 border-slate-200 w-20 md:w-32 text-xs md:text-sm">Дозам. вих.</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+                
+                catData.items.forEach(item => {
+                    const d = (data[catKey] && data[catKey][item]) || { stock: '', weekday: '', weekend: '', orderWeekday: 0, orderWeekend: 0 };
+                    
+                    // Підсвітка, якщо треба замовити
+                    const needsOrder = (d.orderWeekday > 0 || d.orderWeekend > 0);
+                    const rowClass = needsOrder ? 'bg-yellow-50' : '';
+
+                    html += `
+                    <tr class="border-b border-slate-100 hover:bg-slate-50 ${rowClass}">
+                        <td class="p-2 md:p-3 text-slate-700 text-xs md:text-sm">${item}</td>
+                        <td class="p-1 md:p-3">
+                            <input type="number" step="0.1" value="${d.stock}" onchange="handleChange('${catKey}','${item}','stock',this.value)" class="w-full px-2 py-1 md:px-3 md:py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-center text-xs md:text-sm bg-white" placeholder="0">
+                        </td>
+                        <td class="p-1 md:p-3">
+                            <input type="number" step="0.1" value="${d.weekday}" ${!isUnlocked ? 'readonly' : ''} onchange="handleChange('${catKey}','${item}','weekday',this.value)" class="w-full px-2 py-1 md:px-3 md:py-2 border border-slate-300 rounded-lg text-center text-xs md:text-sm ${!isUnlocked ? 'bg-slate-100 cursor-not-allowed' : 'bg-white focus:ring-2 focus:ring-blue-500'}" placeholder="0">
+                        </td>
+                        <td class="p-1 md:p-3">
+                            <input type="number" step="0.1" value="${d.weekend}" ${!isUnlocked ? 'readonly' : ''} onchange="handleChange('${catKey}','${item}','weekend',this.value)" class="w-full px-2 py-1 md:px-3 md:py-2 border border-slate-300 rounded-lg text-center text-xs md:text-sm ${!isUnlocked ? 'bg-slate-100 cursor-not-allowed' : 'bg-white focus:ring-2 focus:ring-blue-500'}" placeholder="0">
+                        </td>
+                        <td class="p-2 md:p-3 text-center font-semibold text-green-700 text-xs md:text-sm">
+                            ${d.orderWeekday > 0 ? Number(d.orderWeekday).toFixed(1) : ''}
+                        </td>
+                        <td class="p-2 md:p-3 text-center font-semibold text-green-700 text-xs md:text-sm">
+                            ${d.orderWeekend > 0 ? Number(d.orderWeekend).toFixed(1) : ''}
+                        </td>
+                    </tr>`;
+                });
+                html += `</tbody></table></div></div>`;
+            });
+            document.getElementById('checklist-container').innerHTML = html;
+        }
+
+        // --- УТИЛІТИ ---
+
+        function showStatus(msg, classes) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `px-4 py-2 rounded-lg font-medium fixed bottom-4 right-4 z-50 shadow-lg ${classes}`;
+            statusDiv.textContent = msg;
+            statusDiv.style.display = 'block';
+            setTimeout(() => { statusDiv.style.display = 'none'; }, 2000);
+        }
+
+        // Логіка пароля
+        function togglePasswordProtection() {
+            if (isUnlocked) {
+                isUnlocked = false;
+                updateLockUI();
+                renderUI();
+                showStatus('🔒 Заблоковано', 'bg-blue-100 text-blue-700');
+            } else {
+                showPasswordModal();
+            }
+        }
+        function updateLockUI() {
+            document.getElementById('lockIcon').textContent = isUnlocked ? '🔓' : '🔒';
+            document.getElementById('lockText').textContent = isUnlocked ? 'Заблокувати' : 'Розблокувати';
+        }
+        function showPasswordModal() { document.getElementById('passwordModal').style.display = 'flex'; document.getElementById('passwordInput').focus(); }
+        function closePasswordModal() { document.getElementById('passwordModal').style.display = 'none'; pendingAction = null; }
+        
+        function checkPassword() {
+            const input = document.getElementById('passwordInput').value;
+            if (input === PASSWORD) {
+                isUnlocked = true;
+                document.getElementById('passwordModal').style.display = 'none';
+                document.getElementById('passwordInput').value = '';
+                document.getElementById('passwordError').style.display = 'none';
+                
+                // Якщо була відкладена дія (зміна норми), виконуємо її
+                if (pendingAction) {
+                    handleChange(pendingAction.category, pendingAction.item, pendingAction.field, pendingAction.value);
+                    pendingAction = null;
+                }
+                updateLockUI();
+                renderUI();
+                showStatus('✓ Розблоковано', 'bg-green-100 text-green-700');
+            } else {
+                document.getElementById('passwordError').style.display = 'block';
+            }
+        }
+
+        // Очищення (Тільки залишки, норми залишаються)
+        function clearStocksOnly() {
+            if (confirm('Очистити всі введені ЗАЛИШКИ? Норми залишаться без змін.')) {
+                Object.keys(data).forEach(cat => {
+                    Object.keys(data[cat]).forEach(item => {
+                        data[cat][item].stock = ''; // Очищаємо залишок
+                        // Перераховуємо замовлення як "повна норма"
+                        const weekday = parseFloat(data[cat][item].weekday) || 0;
+                        const weekend = parseFloat(data[cat][item].weekend) || 0;
+                        data[cat][item].orderWeekday = weekday;
+                        data[cat][item].orderWeekend = weekend;
+                    });
+                });
+                // Заливаємо оновлений об'єкт в базу
+                window.firebaseSet(window.firebaseRef(window.db, 'checklist_data'), data)
+                    .then(() => showStatus('✓ Залишки очищено', 'bg-green-100 text-green-700'));
+            }
+        }
+
+        // Експорт та Друк (функції залишено майже без змін, адаптовано під нову структуру data)
+        function printList() { window.print(); }
+
+        function exportToExcel() {
+            const wb = XLSX.utils.book_new();
+            const dateStr = new Date().toLocaleDateString('uk-UA');
+            const wsData = [
+                ['Ресторан "Той Самий Баранчик Кременчук"'],
+                ['Чек-лист закупки для холодного цеху'],
+                [`Дата: ${dateStr}`],
+                [],
+                ['Категорія', 'Найменування', 'Залишок', 'Норма буд.', 'Норма вих.', 'Дозам. буд.', 'Дозам. вих.']
+            ];
+            
+            Object.entries(categories).forEach(([catKey, catData]) => {
+                catData.items.forEach(item => {
+                    const d = (data[catKey] && data[catKey][item]) || {};
+                    wsData.push([
+                        catKey, item, d.stock, d.weekday, d.weekend, 
+                        d.orderWeekday > 0 ? d.orderWeekday.toFixed(1) : '',
+                        d.orderWeekend > 0 ? d.orderWeekend.toFixed(1) : ''
+                    ]);
+                });
+            });
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            ws['!cols'] = [{wch:25},{wch:30},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12}];
+            XLSX.utils.book_append_sheet(wb, ws, 'Закупка');
+            XLSX.writeFile(wb, `Закупка_ХЦ_${dateStr}.xlsx`);
+        }
+        
+        // Enter у модалці
+        document.getElementById('passwordInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') checkPassword();
+        });
+    </script>
+</body>
+</html>
